@@ -14,6 +14,8 @@ class SensorManager: ObservableObject {
     private var timer: Timer?
     
     @Published var totalSamples = 0
+    @Published var statusMessage = "Ready"
+    @Published var availableSensors: [String] = []
     
     // Data storage
     private var accelerometerData: [SensorDataPoint] = []
@@ -42,49 +44,128 @@ class SensorManager: ObservableObject {
         // Clear previous data
         clearData()
         
-        // Start accelerometer
+        var sensorsStarted: [String] = []
+        
+        // Check and start accelerometer
         if motionManager.isAccelerometerAvailable {
             motionManager.accelerometerUpdateInterval = accelerometerUpdateInterval
             motionManager.startAccelerometerUpdates(to: .main) { [weak self] (data, error) in
-                guard let data = data, error == nil else { return }
+                if let error = error {
+                    print("❌ Accelerometer error: \(error.localizedDescription)")
+                    return
+                }
+                guard let data = data else { return }
                 self?.addAccelerometerData(data)
             }
+            sensorsStarted.append("Accelerometer")
+            print("✅ Accelerometer started")
+        } else {
+            print("⚠️ Accelerometer not available")
         }
         
-        // Start gyroscope
+        // Check and start gyroscope
         if motionManager.isGyroAvailable {
             motionManager.gyroUpdateInterval = gyroscopeUpdateInterval
             motionManager.startGyroUpdates(to: .main) { [weak self] (data, error) in
-                guard let data = data, error == nil else { return }
+                if let error = error {
+                    print("❌ Gyroscope error: \(error.localizedDescription)")
+                    return
+                }
+                guard let data = data else { return }
                 self?.addGyroscopeData(data)
             }
+            sensorsStarted.append("Gyroscope")
+            print("✅ Gyroscope started")
+        } else {
+            print("⚠️ Gyroscope not available")
         }
         
-        // Start magnetometer
+        // Check and start magnetometer
         if motionManager.isMagnetometerAvailable {
             motionManager.magnetometerUpdateInterval = magnetometerUpdateInterval
             motionManager.startMagnetometerUpdates(to: .main) { [weak self] (data, error) in
-                guard let data = data, error == nil else { return }
+                if let error = error {
+                    print("❌ Magnetometer error: \(error.localizedDescription)")
+                    return
+                }
+                guard let data = data else { return }
                 self?.addMagnetometerData(data)
             }
+            sensorsStarted.append("Magnetometer")
+            print("✅ Magnetometer started")
+        } else {
+            print("⚠️ Magnetometer not available")
         }
         
         // Start device motion (includes attitude, rotation rate, gravity, user acceleration, magnetic field)
         if motionManager.isDeviceMotionAvailable {
             motionManager.deviceMotionUpdateInterval = deviceMotionUpdateInterval
-            motionManager.startDeviceMotionUpdates(using: .xMagneticNorthZVertical, to: .main) { [weak self] (data, error) in
-                guard let data = data, error == nil else { return }
+            
+            // Try to find an available reference frame
+            let availableFrames = CMAttitudeReferenceFrame.available
+            var referenceFrame: CMAttitudeReferenceFrame = .xMagneticNorthZVertical
+            
+            // Prefer xMagneticNorthZVertical, fallback to others
+            if availableFrames.contains(.xMagneticNorthZVertical) {
+                referenceFrame = .xMagneticNorthZVertical
+            } else if availableFrames.contains(.xArbitraryZVertical) {
+                referenceFrame = .xArbitraryZVertical
+            } else if availableFrames.contains(.xArbitraryCorrectedZVertical) {
+                referenceFrame = .xArbitraryCorrectedZVertical
+            }
+            
+            motionManager.startDeviceMotionUpdates(using: referenceFrame, to: .main) { [weak self] (data, error) in
+                if let error = error {
+                    print("❌ Device Motion error: \(error.localizedDescription)")
+                    return
+                }
+                guard let data = data else { return }
                 self?.addDeviceMotionData(data)
             }
+            sensorsStarted.append("Device Motion")
+            print("✅ Device Motion started with reference frame: \(referenceFrame.rawValue)")
+        } else {
+            print("⚠️ Device Motion not available")
         }
         
         // Start altimeter if available (for watchOS)
         if CMAltimeter.isRelativeAltitudeAvailable() {
             altimeter = CMAltimeter()
             altimeter?.startRelativeAltitudeUpdates(to: .main) { [weak self] (data, error) in
-                guard let data = data, error == nil else { return }
+                if let error = error {
+                    print("❌ Altimeter error: \(error.localizedDescription)")
+                    return
+                }
+                guard let data = data else { return }
                 self?.addAltimeterData(data)
             }
+            sensorsStarted.append("Altimeter")
+            print("✅ Altimeter started")
+        } else {
+            print("⚠️ Altimeter not available")
+        }
+        
+        // Update status
+        DispatchQueue.main.async { [weak self] in
+            self?.availableSensors = sensorsStarted
+            if sensorsStarted.isEmpty {
+                self?.statusMessage = "⚠️ No sensors available\n(Use physical Apple Watch)"
+            } else {
+                let sensorList = sensorsStarted.joined(separator: ", ")
+                self?.statusMessage = "✅ \(sensorsStarted.count) sensor(s) active:\n\(sensorList)"
+                
+                // Note about Device Motion including gyro data
+                if sensorsStarted.contains("Device Motion") && !sensorsStarted.contains("Gyroscope") {
+                    self?.statusMessage += "\n(Device Motion includes rotation rate)"
+                }
+            }
+        }
+        
+        print("📊 Started collection from \(sensorsStarted.count) sensor(s): \(sensorsStarted.joined(separator: ", "))")
+        
+        // Important note about Device Motion
+        if sensorsStarted.contains("Device Motion") {
+            print("ℹ️  Note: Device Motion includes rotation rate (gyroscope-like data) even if Gyroscope sensor is not available")
         }
     }
     
@@ -105,7 +186,9 @@ class SensorManager: ObservableObject {
             self.magnetometerData.removeAll()
             self.deviceMotionData.removeAll()
             self.altimeterData.removeAll()
-            self.totalSamples = 0
+        }
+        DispatchQueue.main.async { [weak self] in
+            self?.totalSamples = 0
         }
     }
     

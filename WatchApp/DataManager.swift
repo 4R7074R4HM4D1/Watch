@@ -6,12 +6,16 @@
 //
 
 import Foundation
+import Combine
 
 class DataManager: ObservableObject {
     @Published var uploadStatus = ""
     
     // Configure your server URL here
-    private let serverURL = "https://your-server.com/upload"
+    // For local testing: "http://localhost:3000/upload"
+    // For physical device: "http://YOUR_MAC_IP:3000/upload" (e.g., "http://192.168.1.100:3000/upload")
+    // For production: "https://your-server.com/upload"
+    private let serverURL = "http://localhost:3000/upload"
     
     func saveAndUpload(data: SensorSessionData, startTime: Date) async {
         // Create filename with timestamp

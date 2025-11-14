@@ -38,6 +38,16 @@ struct ContentView: View {
                 .font(.caption2)
                 .foregroundColor(.secondary)
             
+            // Status message
+            if !sensorManager.statusMessage.isEmpty {
+                Text(sensorManager.statusMessage)
+                    .font(.caption2)
+                    .foregroundColor(sensorManager.statusMessage.contains("⚠️") ? .orange : .secondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(4)
+                    .padding(.horizontal)
+            }
+            
             // Start/Stop button
             Button(action: {
                 if isRecording {
