@@ -1,0 +1,75 @@
+{
+  "accelerometer": [
+    {
+      "timestamp": 1234567890.123,
+      "x": 0.1,
+      "y": 0.2,
+      "z": 0.3
+    },
+    {
+      "timestamp": 1234567890.223,
+      "x": 0.15,
+      "y": 0.25,
+      "z": 0.35
+    }
+  ],
+  "gyroscope": [
+    {
+      "timestamp": 1234567890.123,
+      "x": 0.01,
+      "y": 0.02,
+      "z": 0.03
+    }
+  ],
+  "magnetometer": [
+    {
+      "timestamp": 1234567890.123,
+      "x": 20.5,
+      "y": 30.2,
+      "z": 40.1
+    }
+  ],
+  "deviceMotion": [
+    {
+      "timestamp": 1234567890.123,
+      "attitude": {
+        "roll": 0.1,
+        "pitch": 0.2,
+        "yaw": 0.3
+      },
+      "rotationRate": {
+        "timestamp": 1234567890.123,
+        "x": 0.01,
+        "y": 0.02,
+        "z": 0.03
+      },
+      "gravity": {
+        "timestamp": 1234567890.123,
+        "x": 0.0,
+        "y": 0.0,
+        "z": -1.0
+      },
+      "userAcceleration": {
+        "timestamp": 1234567890.123,
+        "x": 0.1,
+        "y": 0.2,
+        "z": 0.3
+      },
+      "magneticField": {
+        "timestamp": 1234567890.123,
+        "x": 20.5,
+        "y": 30.2,
+        "z": 40.1
+      }
+    }
+  ],
+  "altimeter": [
+    {
+      "timestamp": 1234567890.123,
+      "relativeAltitude": 0.5,
+      "pressure": 101325.0
+    }
+  ],
+  "startTime": "2024-01-01T12:00:00Z"
+}
+
