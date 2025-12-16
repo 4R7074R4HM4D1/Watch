@@ -11,11 +11,15 @@ import Combine
 class DataManager: ObservableObject {
     @Published var uploadStatus = ""
     
-    // Configure your server URL here
-    // For local testing: "http://localhost:3000/upload"
-    // For physical device: "http://YOUR_MAC_IP:3000/upload" (e.g., "http://192.168.1.100:3000/upload")
-    // For production: "https://your-server.com/upload"
-    private let serverURL = "http://localhost:3000/upload"
+    // MARK: - Server Configuration
+    // You can change these from the watch UI before starting a session
+    @Published var serverHost: String = "localhost"
+    @Published var serverPort: String = "3000"
+    
+    // Computed server URL from host and port
+    private var serverURLString: String {
+        return "http://\(serverHost):\(serverPort)/upload"
+    }
     
     func saveAndUpload(data: SensorSessionData, startTime: Date) async {
         // Create filename with timestamp
@@ -55,7 +59,7 @@ class DataManager: ObservableObject {
     }
     
     private func uploadFile(fileURL: URL, filename: String) async {
-        guard let url = URL(string: serverURL) else {
+        guard let url = URL(string: serverURLString) else {
             await MainActor.run {
                 uploadStatus = "Error: Invalid server URL"
             }

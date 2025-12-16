@@ -12,10 +12,19 @@ import Combine
 class SensorManager: ObservableObject {
     private let motionManager = CMMotionManager()
     private var timer: Timer?
+    private var simulationTimer: Timer?
+    private var isSimulating = false
     
     @Published var totalSamples = 0
     @Published var statusMessage = "Ready"
     @Published var availableSensors: [String] = []
+    
+    // Individual sensor sample counts
+    @Published var accelerometerSamples = 0
+    @Published var gyroscopeSamples = 0
+    @Published var magnetometerSamples = 0
+    @Published var deviceMotionSamples = 0
+    @Published var altimeterSamples = 0
     
     // Data storage
     private var accelerometerData: [SensorDataPoint] = []
@@ -34,7 +43,8 @@ class SensorManager: ObservableObject {
     private let deviceMotionUpdateInterval: TimeInterval = 1.0 / 100.0   // 100 Hz
     
     var isCollecting: Bool {
-        return motionManager.isAccelerometerActive || 
+        return isSimulating ||
+               motionManager.isAccelerometerActive || 
                motionManager.isGyroActive || 
                motionManager.isMagnetometerActive ||
                motionManager.isDeviceMotionActive
@@ -44,9 +54,31 @@ class SensorManager: ObservableObject {
         // Clear previous data
         clearData()
         
+        // Check if we're on simulator (sensors may not work)
+        #if targetEnvironment(simulator)
+        print("⚠️ Running on Simulator - starting simulation mode")
+        DispatchQueue.main.async { [weak self] in
+            self?.statusMessage = "🧪 Simulator Mode\nGenerating test data"
+        }
+        startSimulation()
+        return
+        #endif
+        
         var sensorsStarted: [String] = []
         
-        // Check and start accelerometer
+        // Diagnostic: Check what's available
+        print("📱 Sensor Availability Check:")
+        print("   Accelerometer: \(motionManager.isAccelerometerAvailable ? "✅" : "❌")")
+        print("   Gyroscope: \(motionManager.isGyroAvailable ? "✅" : "❌")")
+        print("   Magnetometer: \(motionManager.isMagnetometerAvailable ? "✅" : "❌")")
+        print("   Device Motion: \(motionManager.isDeviceMotionAvailable ? "✅" : "❌")")
+        print("   Altimeter: \(CMAltimeter.isRelativeAltitudeAvailable() ? "✅" : "❌")")
+        
+        // On watchOS, Device Motion takes priority and includes gyroscope/magnetometer data
+        // We'll extract that data into separate arrays
+        let useDeviceMotion = motionManager.isDeviceMotionAvailable
+        
+        // Check and start accelerometer (can work alongside Device Motion)
         if motionManager.isAccelerometerAvailable {
             motionManager.accelerometerUpdateInterval = accelerometerUpdateInterval
             motionManager.startAccelerometerUpdates(to: .main) { [weak self] (data, error) in
@@ -63,8 +95,9 @@ class SensorManager: ObservableObject {
             print("⚠️ Accelerometer not available")
         }
         
-        // Check and start gyroscope
-        if motionManager.isGyroAvailable {
+        // Only start individual gyroscope if Device Motion is NOT available
+        // (Device Motion includes rotation rate, so we'll extract it from there)
+        if !useDeviceMotion && motionManager.isGyroAvailable {
             motionManager.gyroUpdateInterval = gyroscopeUpdateInterval
             motionManager.startGyroUpdates(to: .main) { [weak self] (data, error) in
                 if let error = error {
@@ -75,13 +108,17 @@ class SensorManager: ObservableObject {
                 self?.addGyroscopeData(data)
             }
             sensorsStarted.append("Gyroscope")
-            print("✅ Gyroscope started")
+            print("✅ Gyroscope started (standalone)")
+        } else if useDeviceMotion {
+            sensorsStarted.append("Gyroscope (from Device Motion)")
+            print("ℹ️  Gyroscope data will be extracted from Device Motion")
         } else {
             print("⚠️ Gyroscope not available")
         }
         
-        // Check and start magnetometer
-        if motionManager.isMagnetometerAvailable {
+        // Only start individual magnetometer if Device Motion is NOT available
+        // (Device Motion includes magnetic field, so we'll extract it from there)
+        if !useDeviceMotion && motionManager.isMagnetometerAvailable {
             motionManager.magnetometerUpdateInterval = magnetometerUpdateInterval
             motionManager.startMagnetometerUpdates(to: .main) { [weak self] (data, error) in
                 if let error = error {
@@ -92,7 +129,10 @@ class SensorManager: ObservableObject {
                 self?.addMagnetometerData(data)
             }
             sensorsStarted.append("Magnetometer")
-            print("✅ Magnetometer started")
+            print("✅ Magnetometer started (standalone)")
+        } else if useDeviceMotion {
+            sensorsStarted.append("Magnetometer (from Device Motion)")
+            print("ℹ️  Magnetometer data will be extracted from Device Motion")
         } else {
             print("⚠️ Magnetometer not available")
         }
@@ -101,18 +141,9 @@ class SensorManager: ObservableObject {
         if motionManager.isDeviceMotionAvailable {
             motionManager.deviceMotionUpdateInterval = deviceMotionUpdateInterval
             
-            // Try to find an available reference frame
-            let availableFrames = CMAttitudeReferenceFrame.available
-            var referenceFrame: CMAttitudeReferenceFrame = .xMagneticNorthZVertical
-            
-            // Prefer xMagneticNorthZVertical, fallback to others
-            if availableFrames.contains(.xMagneticNorthZVertical) {
-                referenceFrame = .xMagneticNorthZVertical
-            } else if availableFrames.contains(.xArbitraryZVertical) {
-                referenceFrame = .xArbitraryZVertical
-            } else if availableFrames.contains(.xArbitraryCorrectedZVertical) {
-                referenceFrame = .xArbitraryCorrectedZVertical
-            }
+            // Use xArbitraryZVertical as default (most compatible with watchOS)
+            // This reference frame is always available on watchOS
+            let referenceFrame: CMAttitudeReferenceFrame = .xArbitraryZVertical
             
             motionManager.startDeviceMotionUpdates(using: referenceFrame, to: .main) { [weak self] (data, error) in
                 if let error = error {
@@ -123,7 +154,7 @@ class SensorManager: ObservableObject {
                 self?.addDeviceMotionData(data)
             }
             sensorsStarted.append("Device Motion")
-            print("✅ Device Motion started with reference frame: \(referenceFrame.rawValue)")
+            print("✅ Device Motion started with reference frame: xArbitraryZVertical")
         } else {
             print("⚠️ Device Motion not available")
         }
@@ -149,15 +180,9 @@ class SensorManager: ObservableObject {
         DispatchQueue.main.async { [weak self] in
             self?.availableSensors = sensorsStarted
             if sensorsStarted.isEmpty {
-                self?.statusMessage = "⚠️ No sensors available\n(Use physical Apple Watch)"
+                self?.statusMessage = "⚠️ No sensors available"
             } else {
-                let sensorList = sensorsStarted.joined(separator: ", ")
-                self?.statusMessage = "✅ \(sensorsStarted.count) sensor(s) active:\n\(sensorList)"
-                
-                // Note about Device Motion including gyro data
-                if sensorsStarted.contains("Device Motion") && !sensorsStarted.contains("Gyroscope") {
-                    self?.statusMessage += "\n(Device Motion includes rotation rate)"
-                }
+                self?.statusMessage = "✅ \(sensorsStarted.count) sensor(s) active"
             }
         }
         
@@ -165,11 +190,16 @@ class SensorManager: ObservableObject {
         
         // Important note about Device Motion
         if sensorsStarted.contains("Device Motion") {
-            print("ℹ️  Note: Device Motion includes rotation rate (gyroscope-like data) even if Gyroscope sensor is not available")
+            print("ℹ️  Note: Gyroscope and Magnetometer data are being extracted from Device Motion")
         }
     }
     
     func stopCollection() {
+        // Stop simulation if running
+        if isSimulating {
+            stopSimulation()
+        }
+        
         motionManager.stopAccelerometerUpdates()
         motionManager.stopGyroUpdates()
         motionManager.stopMagnetometerUpdates()
@@ -177,6 +207,116 @@ class SensorManager: ObservableObject {
         
         altimeter?.stopRelativeAltitudeUpdates()
         altimeter = nil
+    }
+    
+    // MARK: - Simulation Mode (for Simulator)
+    
+    private func startSimulation() {
+        isSimulating = true
+        let startTime = Date().timeIntervalSince1970
+        var sampleCount: Int = 0
+        
+        // Update available sensors for simulation
+        DispatchQueue.main.async { [weak self] in
+            self?.availableSensors = ["Accelerometer (Simulated)", "Gyroscope (Simulated)", "Device Motion (Simulated)"]
+            self?.statusMessage = "🧪 Simulator Mode\nGenerating test data"
+        }
+        
+        // Generate simulated data at 100 Hz (every 0.01 seconds)
+        simulationTimer = Timer.scheduledTimer(withTimeInterval: 0.01, repeats: true) { [weak self] timer in
+            guard let self = self, self.isSimulating else {
+                timer.invalidate()
+                return
+            }
+            
+            let currentTime = Date().timeIntervalSince1970
+            let timestamp = currentTime
+            
+            // Generate realistic-looking sensor data with some variation
+            let time = currentTime
+            let frequency = 2.0 // Hz for oscillation
+            
+            // Simulated accelerometer data (sine wave with noise)
+            let accelX = 0.1 * sin(time * frequency * 2 * .pi) + Double.random(in: -0.05...0.05)
+            let accelY = 0.15 * cos(time * frequency * 2 * .pi) + Double.random(in: -0.05...0.05)
+            let accelZ = -1.0 + 0.1 * sin(time * frequency * 1.5 * 2 * .pi) + Double.random(in: -0.05...0.05)
+            
+            // Simulated gyroscope data
+            let gyroX = 0.5 * sin(time * frequency * 1.2 * 2 * .pi) + Double.random(in: -0.1...0.1)
+            let gyroY = 0.3 * cos(time * frequency * 1.3 * 2 * .pi) + Double.random(in: -0.1...0.1)
+            let gyroZ = 0.2 * sin(time * frequency * 1.1 * 2 * .pi) + Double.random(in: -0.1...0.1)
+            
+            // Add simulated data
+            self.dataQueue.async(flags: .barrier) {
+                // Accelerometer
+                self.accelerometerData.append(SensorDataPoint(
+                    timestamp: timestamp,
+                    x: accelX,
+                    y: accelY,
+                    z: accelZ
+                ))
+                
+                // Gyroscope
+                self.gyroscopeData.append(SensorDataPoint(
+                    timestamp: timestamp,
+                    x: gyroX,
+                    y: gyroY,
+                    z: gyroZ
+                ))
+                
+                // Device Motion (includes all sensor data)
+                self.deviceMotionData.append(DeviceMotionDataPoint(
+                    timestamp: timestamp,
+                    attitude: AttitudeData(
+                        roll: 0.1 * sin(time * frequency * 2 * .pi),
+                        pitch: 0.15 * cos(time * frequency * 2 * .pi),
+                        yaw: 0.2 * sin(time * frequency * 1.5 * 2 * .pi)
+                    ),
+                    rotationRate: SensorDataPoint(
+                        timestamp: timestamp,
+                        x: gyroX,
+                        y: gyroY,
+                        z: gyroZ
+                    ),
+                    gravity: SensorDataPoint(
+                        timestamp: timestamp,
+                        x: 0.0,
+                        y: 0.0,
+                        z: -1.0
+                    ),
+                    userAcceleration: SensorDataPoint(
+                        timestamp: timestamp,
+                        x: accelX,
+                        y: accelY,
+                        z: accelZ
+                    ),
+                    magneticField: SensorDataPoint(
+                        timestamp: timestamp,
+                        x: 20.0 + Double.random(in: -2...2),
+                        y: 30.0 + Double.random(in: -2...2),
+                        z: 40.0 + Double.random(in: -2...2)
+                    )
+                ))
+            }
+            
+            // Update sample counts on main thread
+            sampleCount += 3 // 3 sensors per update
+            DispatchQueue.main.async {
+                self.totalSamples = sampleCount
+                self.accelerometerSamples += 1
+                self.gyroscopeSamples += 1
+                self.deviceMotionSamples += 1
+            }
+        }
+        
+        print("🧪 Simulation mode started - generating test sensor data at 100 Hz")
+    }
+    
+    private func stopSimulation() {
+        isSimulating = false
+        simulationTimer?.invalidate()
+        simulationTimer = nil
+        print("🧪 Simulation mode stopped")
     }
     
     private func clearData() {
@@ -189,6 +329,11 @@ class SensorManager: ObservableObject {
         }
         DispatchQueue.main.async { [weak self] in
             self?.totalSamples = 0
+            self?.accelerometerSamples = 0
+            self?.gyroscopeSamples = 0
+            self?.magnetometerSamples = 0
+            self?.deviceMotionSamples = 0
+            self?.altimeterSamples = 0
         }
     }
     
@@ -203,6 +348,7 @@ class SensorManager: ObservableObject {
             self.accelerometerData.append(point)
             DispatchQueue.main.async {
                 self.totalSamples += 1
+                self.accelerometerSamples += 1
             }
         }
     }
@@ -218,6 +364,7 @@ class SensorManager: ObservableObject {
             self.gyroscopeData.append(point)
             DispatchQueue.main.async {
                 self.totalSamples += 1
+                self.gyroscopeSamples += 1
             }
         }
     }
@@ -233,47 +380,75 @@ class SensorManager: ObservableObject {
             self.magnetometerData.append(point)
             DispatchQueue.main.async {
                 self.totalSamples += 1
+                self.magnetometerSamples += 1
             }
         }
     }
     
     private func addDeviceMotionData(_ data: CMDeviceMotion) {
         dataQueue.async(flags: .barrier) {
+            let timestamp = data.timestamp
+            
+            // Extract rotation rate (gyroscope data) from Device Motion
+            let gyroPoint = SensorDataPoint(
+                timestamp: timestamp,
+                x: data.rotationRate.x,
+                y: data.rotationRate.y,
+                z: data.rotationRate.z
+            )
+            self.gyroscopeData.append(gyroPoint)
+            
+            // Extract magnetic field (magnetometer data) from Device Motion
+            // Accept all magnetic field data (even uncalibrated - it's still useful)
+            let magPoint = SensorDataPoint(
+                timestamp: timestamp,
+                x: data.magneticField.field.x,
+                y: data.magneticField.field.y,
+                z: data.magneticField.field.z
+            )
+            self.magnetometerData.append(magPoint)
+            
+            // Store full Device Motion data
             let point = DeviceMotionDataPoint(
-                timestamp: data.timestamp,
+                timestamp: timestamp,
                 attitude: AttitudeData(
                     roll: data.attitude.roll,
                     pitch: data.attitude.pitch,
                     yaw: data.attitude.yaw
                 ),
                 rotationRate: SensorDataPoint(
-                    timestamp: data.timestamp,
+                    timestamp: timestamp,
                     x: data.rotationRate.x,
                     y: data.rotationRate.y,
                     z: data.rotationRate.z
                 ),
                 gravity: SensorDataPoint(
-                    timestamp: data.timestamp,
+                    timestamp: timestamp,
                     x: data.gravity.x,
                     y: data.gravity.y,
                     z: data.gravity.z
                 ),
                 userAcceleration: SensorDataPoint(
-                    timestamp: data.timestamp,
+                    timestamp: timestamp,
                     x: data.userAcceleration.x,
                     y: data.userAcceleration.y,
                     z: data.userAcceleration.z
                 ),
                 magneticField: SensorDataPoint(
-                    timestamp: data.timestamp,
+                    timestamp: timestamp,
                     x: data.magneticField.field.x,
                     y: data.magneticField.field.y,
                     z: data.magneticField.field.z
                 )
             )
             self.deviceMotionData.append(point)
+            
+            // Update sample counts (Device Motion adds to multiple arrays)
             DispatchQueue.main.async {
                 self.totalSamples += 1
+                self.deviceMotionSamples += 1
+                self.gyroscopeSamples += 1
+                self.magnetometerSamples += 1
             }
         }
     }
@@ -288,6 +463,7 @@ class SensorManager: ObservableObject {
             self.altimeterData.append(point)
             DispatchQueue.main.async {
                 self.totalSamples += 1
+                self.altimeterSamples += 1
             }
         }
     }
@@ -302,6 +478,12 @@ class SensorManager: ObservableObject {
                 altimeter: altimeterData,
                 startTime: Date()
             )
+        }
+    }
+    
+    func getAccelerometerData() -> [SensorDataPoint] {
+        return dataQueue.sync {
+            return accelerometerData
         }
     }
 }
